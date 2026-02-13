@@ -1,5 +1,12 @@
-
-desktop.ini
+# System Files
 .DS_Store
+desktop.ini
 
+# Secrets & Configs
+.env
 keys/
+openvpn/*.ovpn
+
+# Python / Cache
+__pycache__/
+*.py[cod]

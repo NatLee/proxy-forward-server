@@ -26,9 +26,9 @@ services:
     depends_on:
       - openvpn
     volumes:
-      - ./keys/key-to-aws.pem:/key.pem:ro
+      - ${SSH_KEY_PATH}:/key.pem:ro
     command: >
-      /bin/sh -c " sleep 10 && autossh -M 20000 -N \ -o 'StrictHostKeyChecking no' \ -o 'ExitOnForwardFailure yes' \ -R 2080:127.0.0.1:1080 \ -i /key.pem \ ubuntu@172.31.67.145"
+      /bin/sh -c " sleep 10 && autossh -M 20000 -N \ -o 'StrictHostKeyChecking no' \ -o 'ExitOnForwardFailure yes' \ -R ${REMOTE_PORT}:127.0.0.1:${PROXY_PORT} \ -i /key.pem \ ${REMOTE_USER}@${REMOTE_HOST}"
 
   # HTTP/SOCKS4/SOCKS5 代理服務器 (pproxy)
   proxy:
@@ -40,3 +40,4 @@ services:
     stdin_open: true
     depends_on:
       - openvpn
+    command: [ "pproxy", "-l", "http+socks4+socks5://:${PROXY_PORT}", "-vv" ]
