@@ -39,12 +39,31 @@ cp .env.example .env
 - `REMOTE_HOST`: 遠端 SSH 伺服器 IP
 - `REMOTE_USER`: SSH 使用者
 - `SSH_KEY_PATH`: SSH 私鑰路徑 (需放在專案目錄下)
+- `OVPN_CONFIG_PATH`: OpenVPN 設定檔路徑 (預設 ./openvpn/client.ovpn)
 - `REMOTE_PORT`: 遠端轉發的埠口 (預設 2080)
 
 ### 3. 準備金鑰與設定
 
 - **SSH Key**: 將私鑰放在 `keys/` 目錄 (或 `.env` 指定的路徑)
 - **OpenVPN Config**: 將 `.ovpn` 檔案放在 `openvpn/client.ovpn`
+
+> [!IMPORTANT]
+> **OpenVPN 設定檔注意事項**
+> 為了避免 VPN 接管所有流量導致 SSH 斷線，請確認 `.ovpn` 包含以下設定：
+> 
+> ```nginx
+> # 1. 拒絕 Server 推送的預設路由，避免流量全走 VPN
+> route-nopull
+> 
+> # 2. 手動加入 VPN 網段路由 (依據你的 VPN 設定調整)
+> route 10.8.0.0 255.255.255.0 vpn_gateway
+> 
+> # 3. 手動加入目標內網路由 (例如 AWS VPC 網段)
+> route 172.31.0.0 255.255.0.0 vpn_gateway
+> 
+> # 4. 允許執行外部 Script (若有需要)
+> script-security 2
+> ```
 
 ### 4. 啟動服務
 
