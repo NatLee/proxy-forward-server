@@ -1,6 +1,6 @@
 services:
 
-# 0. OpenVPN 客戶端
+  # OpenVPN 客戶端
   openvpn:
     image: alpine:latest
     container_name: pi-openvpn-client
@@ -17,39 +17,26 @@ services:
     command: >
       /bin/sh -c "apk add --no-cache openvpn && openvpn --config /etc/openvpn/client.conf"
 
-  # 1. HTTP 代理伺服器 (用 tinyproxy)
-  proxy:
-      build: ./proxy  # <-- 使用本地 Dockerfile
-      container_name: pi-proxy-server
-      restart: always
-      network_mode: "service:openvpn"
-
-  # 2. SSH 通道建立者
+  # SSH 反向通道建立者
   tunnel:
-    build: ./tunnel # 指向 tunnel Dockerfile
+    build: ./tunnel
     container_name: pi-tunnel-worker
     restart: always
-    network_mode: "service:openvpn" # 寄生在 OpenVPN 網路下
+    network_mode: "service:openvpn"
     depends_on:
       - openvpn
-      - proxy
     volumes:
       - ./keys/key-to-aws.pem:/key.pem:ro
     command: >
-      /bin/sh -c "
-      echo 'Waiting for VPN and proxy to be ready...' &&
-      sleep 10 &&
-      echo 'Starting SSH tunnel with autossh (will auto-reconnect)...' &&
-      autossh -M 20000 -N \
-      -o 'ServerAliveInterval 30' \
-      -o 'ServerAliveCountMax 3' \
-      -o 'StrictHostKeyChecking no' \
-      -o 'ExitOnForwardFailure yes' \
-      -o 'GatewayPorts yes' \
-      -o 'TCPKeepAlive yes' \
-      -o 'Compression no' \
-      -o 'BatchMode yes' \
-      -o 'ConnectTimeout 10' \
-      -R 0.0.0.0:2080:127.0.0.1:1080
-      -i /key.pem \
-      ubuntu@172.31.67.145"
+      /bin/sh -c " sleep 10 && autossh -M 20000 -N \ -o 'StrictHostKeyChecking no' \ -o 'ExitOnForwardFailure yes' \ -R 2080:127.0.0.1:1080 \ -i /key.pem \ ubuntu@172.31.67.145"
+
+  # HTTP/SOCKS4/SOCKS5 代理服務器 (pproxy)
+  proxy:
+    build: ./proxy
+    container_name: pi-pproxy
+    restart: always
+    network_mode: "service:openvpn"
+    tty: true
+    stdin_open: true
+    depends_on:
+      - openvpn
