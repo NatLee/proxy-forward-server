@@ -7,7 +7,7 @@
 # next OpenVPN then opens tun1 while the routes still point at the dead tun0,
 # and the proxy stops working. Removing the leftover first avoids that.
 set -eu
-conf=/etc/openvpn/client.conf # docker-compose.yml mounts the .ovpn here
+conf=${OVPN_CONFIG:?set in vpn/Dockerfile} # where docker-compose.yml mounts the .ovpn
 
 # Which interface OpenVPN uses comes from the `dev` line of the config:
 # "tun" / "tap" mean the next free tunN / tapN, anything else is the exact name.

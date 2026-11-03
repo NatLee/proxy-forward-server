@@ -6,6 +6,9 @@ FROM alpine:3.24.3
 # OpenVPN 的版本跟著上面的 Alpine 版本走；要更新就改 FROM（Dependabot 會開 PR）。
 RUN apk add --no-cache openvpn
 
+# 容器裡 .ovpn 的位置。docker-compose.yml 把 OVPN_CONFIG_PATH 掛載到這裡，兩邊要一致。
+ENV OVPN_CONFIG=/etc/openvpn/client.conf
+
 # 先清掉上次被強制結束時留下的 tun 介面，再啟動 OpenVPN（原因寫在腳本裡）
 COPY start-openvpn.sh /usr/local/bin/start-openvpn
 RUN chmod 755 /usr/local/bin/start-openvpn
