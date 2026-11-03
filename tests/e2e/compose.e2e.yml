@@ -2,15 +2,24 @@
 # makes the test certificates, and renames the containers so the test never
 # touches a real deployment on the same machine. Both test services build from
 # vpn/Dockerfile, so they run on the same pinned Alpine as the project and
-# Dependabot keeps them up to date together. Settings come from run.sh.
+# Dependabot keeps them up to date together.
+# E2E_WORK (the scratch folder) and the other E2E_* values come from run.sh.
 # Paths are relative to the repo root (run.sh passes --project-directory).
+x-server-dir: &server_dir /srv/server
+
 services:
   gen:
     build: ./vpn
     profiles: [setup] # only runs through `compose run gen`
-    environment: [HOST_UID, HOST_GID, E2E_VPN_NET]
+    environment:
+      HOST_UID: ${HOST_UID}
+      HOST_GID: ${HOST_GID}
+      E2E_VPN_NET: ${E2E_VPN_NET}
+      E2E_VPN_SERVER: vpnserver # the service below; the client .ovpn connects to it by name
+      E2E_OVPN_FILE: ${E2E_OVPN_FILE}
+      E2E_KEY_FILE: ${E2E_KEY_FILE}
     volumes:
-      - ./tests/e2e/.work:/out
+      - ./${E2E_WORK}:/out
       - ./tests/e2e/gen.sh:/gen.sh:ro
     command: ["sh", "/gen.sh"]
 
@@ -21,9 +30,15 @@ services:
     restart: always
     cap_add: [NET_ADMIN]
     devices: [/dev/net/tun]
-    environment: [E2E_VPN_NET, E2E_SSH_USER]
+    environment:
+      E2E_VPN_NET: ${E2E_VPN_NET}
+      E2E_SSH_USER: ${E2E_SSH_USER}
+      E2E_SERVER_DIR: *server_dir
     volumes:
-      - ./tests/e2e/.work/server:/srv/server:ro
+      - type: bind
+        source: ./${E2E_WORK}/server
+        target: *server_dir
+        read_only: true
       - ./tests/e2e/vpnserver.sh:/vpnserver.sh:ro
     command: ["sh", "/vpnserver.sh"]
 

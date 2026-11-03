@@ -17,35 +17,55 @@
 #                                             also restart the Docker daemon (uses
 #                                             sudo systemctl; CI only, never on your machine)
 # Needs:  Docker with Compose v2, /dev/net/tun (Linux, or Docker Desktop),
-#         and internet access (it fetches https://example.com through the proxy).
+#         and internet access (it fetches a public web page through the proxy).
 set -eu
 export MSYS_NO_PATHCONV=1 # Git Bash on Windows: pass container paths through untouched
 
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
-work="$here/.work"
 
 # --- test settings, defined once here ------------------------------------------
-# The user and ports are the ones from .env.example, so the test runs the
-# documented example configuration.
+# Scratch folder, relative to the repo root (it is also listed in .gitignore).
+work_rel=tests/e2e/.work
+work="$root/$work_rel"
+
+# The user, ports and file layout are the ones from .env.example, so the test
+# runs the documented example configuration.
 example_value() { sed -n "s/^$1=//p" "$root/.env.example"; }
 ssh_user=$(example_value REMOTE_USER)
 remote_port=$(example_value REMOTE_PORT)
 proxy_port=$(example_value PROXY_PORT)
+key_file=$(example_value SSH_KEY_PATH)
+key_file=${key_file#./}
+ovpn_file=$(example_value OVPN_CONFIG_PATH)
+ovpn_file=${ovpn_file#./}
+
 # The test VPN is $vpn_net.0/24; OpenVPN's `server` directive gives the server
-# .1 and the first (only) client .2. gen.sh and vpnserver.sh get vpn_net from here.
+# .1 and the first (only) client .2.
 vpn_net=10.8.0
 server_ip=$vpn_net.1
 client_ip=$vpn_net.2
-export E2E_VPN_NET="$vpn_net" E2E_SSH_USER="$ssh_user"
-HOST_UID=$(id -u) HOST_GID=$(id -g)
-export HOST_UID HOST_GID
 
-# Time limits for the recovery checks, in seconds.
-restart_limit=30  # a quick openvpn restart must not even reach SSH's 30 s ServerAlive timeout
-outage=45         # longer than that timeout, so SSH has to log in again
-outage_limit=90   # ConnectTimeout (10 s) + autossh retry gap (up to AUTOSSH_POLL, 30 s) + margin
-startup_limit=150 # first start, including image builds and the VPN handshake
+# What the remote host fetches through the proxy: a page over HTTPS, and the
+# same site over plain HTTP.
+test_url=https://example.com/
+plain_url="http://${test_url#https://}"
+
+# Time limits, in seconds.
+startup_limit=150  # first start, including image builds and the VPN handshake
+restart_limit=30   # a quick openvpn restart must not even reach SSH's 30 s ServerAlive timeout
+outage=45          # longer than that timeout, so SSH has to log in again
+outage_limit=90    # ConnectTimeout (10 s) + autossh retry gap (up to AUTOSSH_POLL, 30 s) + margin
+recreate_limit=60  # after `compose up -d` recreates containers; the tunnel logs in again
+poll_timeout=5     # one request while waiting for the proxy
+request_timeout=20 # one request in a check
+
+# compose.e2e.yml, gen.sh and vpnserver.sh read these.
+HOST_UID=$(id -u) HOST_GID=$(id -g)
+export HOST_UID HOST_GID E2E_WORK="$work_rel" E2E_VPN_NET="$vpn_net" E2E_SSH_USER="$ssh_user" \
+  E2E_KEY_FILE="$key_file" E2E_OVPN_FILE="$ovpn_file"
+
+# --- helpers ----------------------------------------------------------------------
 
 # Docker needs Windows-style paths when this runs in Git Bash.
 hostpath() { (cd "$1" && { pwd -W 2>/dev/null || pwd; }); }
@@ -56,6 +76,9 @@ compose() {
     --env-file "$(hostpath "$work")/.env" "$@"
 }
 cid() { compose ps -a -q "$1"; } # container id of a service
+on_remote() { compose exec -T vpnserver "$@"; }
+# How many log lines of a service match a pattern (compared before and after an event).
+log_count() { compose logs --no-color "$1" 2>&1 | grep -c "$2" || true; }
 
 cleanup() {
   status=$?
@@ -77,27 +100,16 @@ write_env() { # $1: extra line for .env (may be empty)
 REMOTE_HOST=$server_ip
 REMOTE_USER=$ssh_user
 REMOTE_PORT=$remote_port
-SSH_KEY_PATH=./tests/e2e/.work/keys/key-to-aws.pem
-OVPN_CONFIG_PATH=./tests/e2e/.work/openvpn/client.ovpn
+SSH_KEY_PATH=./$work_rel/$key_file
+OVPN_CONFIG_PATH=./$work_rel/$ovpn_file
 PROXY_PORT=$proxy_port
 $1
 EOF
 }
 
-rm -rf "$work"
-mkdir -p "$work"
-write_env ""
-trap cleanup EXIT INT TERM
-
-echo "--- generating a test CA, VPN certs and an SSH key"
-compose run --rm --build --quiet-pull gen
-
-echo "--- starting the stack"
-compose up -d --build --quiet-pull 2>&1 | tail -n 5
-
-on_remote() { compose exec -T vpnserver "$@"; }
 remote_request_ok() {
-  on_remote curl -fsS -m 5 -o /dev/null -x "socks5h://127.0.0.1:$remote_port" https://example.com/ >/dev/null 2>&1
+  on_remote curl -fsS -m "$poll_timeout" -o /dev/null \
+    -x "socks5h://127.0.0.1:$remote_port" "$test_url" >/dev/null 2>&1
 }
 # Waits until a program on the remote host can use the proxy again.
 # Prints how long it took; fails after $1 seconds.
@@ -113,9 +125,6 @@ wait_for_proxy() {
   echo "working again after $(($(date +%s) - start)) s"
 }
 
-echo "--- waiting for the reverse tunnel (up to $startup_limit seconds)"
-wait_for_proxy "$startup_limit"
-
 failed=0
 check() {
   name=$1
@@ -130,14 +139,34 @@ check() {
 }
 not() { ! "$@"; }
 
+# --- start ------------------------------------------------------------------------
+
+rm -rf "$work"
+mkdir -p "$work"
+write_env ""
+trap cleanup EXIT INT TERM
+
+echo "--- generating a test CA, VPN certs and an SSH key"
+compose run --rm --build --quiet-pull gen
+
+echo "--- starting the stack"
+compose up -d --build --quiet-pull 2>&1 | tail -n 5
+
+echo "--- waiting for the reverse tunnel (up to $startup_limit seconds)"
+wait_for_proxy "$startup_limit"
+
 # --- the basic path -----------------------------------------------------------
 
-ssh_came_through_vpn() {
-  compose logs --no-color vpnserver | grep -q "Accepted publickey for $ssh_user from $client_ip"
-}
+# The interface that holds this machine's VPN address, and the one Docker gave
+# the shared network (it carries the default route).
+vpn_dev() { compose exec -T netns ip -4 -o addr | awk -v ip="$client_ip/" 'index($4, ip) == 1 {print $2}'; }
+docker_dev() { compose exec -T netns ip route show default | awk '{print $5; exit}'; }
+
+ssh_came_through_vpn() { [ "$(log_count vpnserver "Accepted publickey for $ssh_user from $client_ip")" -gt 0 ]; }
 default_route_not_on_vpn() {
-  routes=$(compose exec -T openvpn ip route)
-  echo "$routes" | grep -q "^default .* dev eth0" && ! echo "$routes" | grep -q "^0.0.0.0/1"
+  dev=$(vpn_dev)
+  [ -n "$dev" ] || return 1
+  ! compose exec -T netns ip route | grep -E "^(default|0\.0\.0\.0/1|128\.0\.0\.0/1) .*dev $dev"
 }
 remote_port_on_loopback_only() {
   listeners=$(on_remote netstat -tln | grep ":$remote_port ")
@@ -145,26 +174,26 @@ remote_port_on_loopback_only() {
 }
 
 check "SOCKS5 (socks5h://) from the remote host" \
-  on_remote curl -fsS -m 20 -o /dev/null -x "socks5h://127.0.0.1:$remote_port" https://example.com/
+  on_remote curl -fsS -m "$request_timeout" -o /dev/null -x "socks5h://127.0.0.1:$remote_port" "$test_url"
 check "HTTP proxy, HTTPS site (CONNECT)" \
-  on_remote curl -fsS -m 20 -o /dev/null -x "http://127.0.0.1:$remote_port" https://example.com/
+  on_remote curl -fsS -m "$request_timeout" -o /dev/null -x "http://127.0.0.1:$remote_port" "$test_url"
 check "HTTP proxy, plain HTTP site" \
-  on_remote curl -fsS -m 20 -o /dev/null -x "http://127.0.0.1:$remote_port" http://example.com/
+  on_remote curl -fsS -m "$request_timeout" -o /dev/null -x "http://127.0.0.1:$remote_port" "$plain_url"
 check "SSH came in through the VPN (from $client_ip)" ssh_came_through_vpn
 check "route-nopull kept the default route off the VPN" default_route_not_on_vpn
 check "remote port $remote_port listens on loopback only" remote_port_on_loopback_only
 
 # --- who else can use the proxy ----------------------------------------------
 # The test server is both a VPN peer (it reaches this machine at $client_ip)
-# and a neighbour on the Docker network (it reaches the shared network's eth0).
+# and a neighbour on the Docker network (it reaches the shared network there).
 
 # Looked up each time, because the address can change when Docker restarts.
-shared_ip() { compose exec -T tunnel ip -4 -o addr show eth0 | awk '{print $4}' | cut -d/ -f1; }
+shared_ip() { compose exec -T netns ip -4 -o addr show dev "$(docker_dev)" | awk '{print $4}' | cut -d/ -f1; }
 vpn_peer_can_use_proxy() {
-  on_remote curl -fsS -m 8 -o /dev/null -x "http://$client_ip:$proxy_port" http://example.com/
+  on_remote curl -fsS -m "$request_timeout" -o /dev/null -x "http://$client_ip:$proxy_port" "$plain_url"
 }
 docker_neighbour_can_use_proxy() {
-  on_remote curl -fsS -m 8 -o /dev/null -x "http://$(shared_ip):$proxy_port" http://example.com/
+  on_remote curl -fsS -m "$request_timeout" -o /dev/null -x "http://$(shared_ip):$proxy_port" "$plain_url"
 }
 
 check "default: a VPN peer can NOT use the proxy directly ($client_ip:$proxy_port)" not vpn_peer_can_use_proxy
@@ -197,7 +226,8 @@ restart_openvpn_and_wait() {
   wait_for_proxy "$restart_limit"
 }
 crash_openvpn_and_wait() {
-  before=$(restarts openvpn)
+  restarts_before=$(restarts openvpn)
+  leftovers_before=$(log_count openvpn "removing leftover")
   pid=$(docker inspect -f '{{.State.Pid}}' "$(cid openvpn)")
   # SIGKILL from outside, like an OOM kill; the restart policy brings it back.
   docker run --rm --pid=host "$(openvpn_image)" kill -9 "$pid"
@@ -206,17 +236,16 @@ crash_openvpn_and_wait() {
     show_openvpn_state
     return 1
   fi
-  [ "$(restarts openvpn)" -gt "$before" ] || return 1
+  [ "$(restarts openvpn)" -gt "$restarts_before" ] || return 1
   # With kernel DCO the killed OpenVPN leaves its interface behind; start-openvpn removes it.
-  if compose logs --no-color --since 2m openvpn 2>&1 | grep -q "removing leftover"; then
+  if [ "$(log_count openvpn "removing leftover")" -gt "$leftovers_before" ]; then
     echo "$took; a leftover DCO interface was removed first"
   else
     echo "$took"
   fi
 }
-ssh_logins() { compose logs --no-color vpnserver | grep -c "Accepted publickey for $ssh_user"; }
 long_vpn_outage_and_wait() {
-  logins_before=$(ssh_logins)
+  logins_before=$(log_count vpnserver "Accepted publickey for $ssh_user")
   docker stop -t 2 "$(cid openvpn)" >/dev/null
   back_at=$(($(date +%s) + outage))
   while [ "$(date +%s)" -lt "$back_at" ]; do sleep 1; done
@@ -226,7 +255,8 @@ long_vpn_outage_and_wait() {
     show_openvpn_state
     return 1
   fi
-  echo "$took; SSH logins during the outage: $(($(ssh_logins) - logins_before))"
+  logins=$(($(log_count vpnserver "Accepted publickey for $ssh_user") - logins_before))
+  echo "$took; SSH logins during the outage: $logins"
 }
 tunnel_and_proxy_never_restarted() {
   [ "$(restarts tunnel)" -eq 0 ] && [ "$(restarts proxy)" -eq 0 ]
@@ -255,7 +285,7 @@ fi
 # recreating openvpn and tunnel, which strands them in the old network.)
 write_env "PROXY_BIND=0.0.0.0"
 compose up -d 2>&1 | grep -E 'Recreated' || true
-check "PROXY_BIND=0.0.0.0: the remote host still works through the tunnel" wait_for_proxy 60
+check "PROXY_BIND=0.0.0.0: the remote host still works through the tunnel" wait_for_proxy "$recreate_limit"
 check "PROXY_BIND=0.0.0.0: a VPN peer can use the proxy directly again" vpn_peer_can_use_proxy
 check "PROXY_BIND=0.0.0.0: a neighbour on the Docker network can use it again" \
   docker_neighbour_can_use_proxy
