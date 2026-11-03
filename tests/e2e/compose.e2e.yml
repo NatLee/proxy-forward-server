@@ -3,7 +3,7 @@
 # Paths are relative to the repo root (run.sh passes --project-directory).
 services:
   vpnserver:
-    image: alpine:3.22
+    image: alpine:3.24.3
     container_name: proxy-forward-e2e-vpnserver
     cap_add: [NET_ADMIN]
     devices: [/dev/net/tun]

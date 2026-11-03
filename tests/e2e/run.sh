@@ -51,7 +51,7 @@ trap cleanup EXIT INT TERM
 echo "--- generating a test CA, VPN certs and an SSH key"
 docker run --rm -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
   -v "$(hostpath "$work"):/out" -v "$(hostpath "$here"):/e2e:ro" \
-  alpine:3.22 sh /e2e/gen.sh
+  alpine:3.24.3 sh /e2e/gen.sh
 
 echo "--- starting the stack"
 compose up -d --build --quiet-pull 2>&1 | tail -n 5
