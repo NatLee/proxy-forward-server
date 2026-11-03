@@ -6,7 +6,12 @@
 
 讓內網裡的一台主機（例如 AWS VPC 裡的 EC2），借用你手上另一台機器（例如家裡或辦公室的 Raspberry Pi）的網路連出去。
 
-你的機器先用 OpenVPN 連進內網，再用 SSH 反向通道把遠端主機的 `127.0.0.1:2080` 接回自己身上的代理伺服器 [pproxy](https://github.com/qwj/python-proxy)。遠端主機上的程式只要把代理設成 `127.0.0.1:2080`，流量就會從你的機器出去。三個元件都跑在 Docker 裡，一行 `docker compose up` 就能啟動。
+你的機器先用 OpenVPN 連進內網，再用 SSH 反向通道把遠端主機的 `127.0.0.1:2080` 接回自己身上的代理伺服器 [pproxy](https://github.com/qwj/python-proxy)。遠端主機上的程式只要把代理設成 `127.0.0.1:2080`，流量就會從你的機器出去。所有元件都跑在 Docker 裡，一行 `docker compose up` 就能啟動。
+
+> [!IMPORTANT]
+> **升級注意（2026-11）**：代理現在預設只聽 `127.0.0.1`，只有 SSH 通道用得到。如果你原本透過 VPN 直接連代理（例如 `10.8.0.2:1080`），在 `.env` 加一行 `PROXY_BIND=0.0.0.0` 就會恢復舊的行為。
+>
+> 這一版也多了一個 `netns` 容器，`openvpn` 改用 repo 裡的映像檔，所以更新後要重新 build 一次：`docker compose up -d --build`。
 
 ## 什麼時候用得到
 
@@ -21,7 +26,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/flow-dark.png">
-    <img src="docs/images/flow-light.png" alt="流程圖：遠端主機上的程式連到 127.0.0.1:2080，經過走在 OpenVPN 通道裡的 SSH 反向通道，回到你的機器上的 pproxy（1080 埠），再用你的機器的網路連到網際網路或區網">
+    <img src="docs/images/flow-light.png" alt="流程圖：遠端主機上的程式連到 127.0.0.1:2080，經過走在 OpenVPN 通道裡的 SSH 反向通道，回到你的機器上的 pproxy（127.0.0.1:1080），再用你的機器的網路連到網際網路或區網">
   </picture>
 </p>
 
@@ -32,7 +37,11 @@
 3. 連線回到你的機器，交給 `proxy` 容器裡的 pproxy（`127.0.0.1:1080`，`PROXY_PORT`）。
 4. pproxy 用你的機器原本的網路連到目的地，所以對方看到的是你的機器的 IP。
 
-三個容器共用 `openvpn` 容器的網路（`network_mode: service:openvpn`）。所以 `tunnel` 的 SSH 連線會照 VPN 的路由進到內網，`tunnel` 也能用 `127.0.0.1` 找到 `proxy`。
+`openvpn`、`tunnel`、`proxy` 三個容器共用同一個網路，這個網路由一個什麼都不做的 `netns` 容器持有（`network_mode: service:netns`）。所以：
+
+- `tunnel` 的 SSH 連線會照 VPN 的路由進到內網。
+- `tunnel` 用 `127.0.0.1` 就找得到 `proxy`，代理不用對其他人開放。
+- `openvpn` 重啟或當掉時，這個網路還在，`tunnel` 和 `proxy` 不用跟著重啟，連線會自己恢復。
 
 ## 需要準備的東西
 
@@ -40,7 +49,7 @@
 
 - Linux，例如 Raspberry Pi OS 或 Ubuntu，裝好 Docker 和 Docker Compose v2（`docker compose version` 要能跑）。
 - `/dev/net/tun`，OpenVPN 要用，一般的 Linux 都有。
-- 能上網：第一次啟動要下載映像檔，而且 `openvpn` 容器每次啟動都會用 `apk` 安裝 OpenVPN。
+- 能上網：第一次 build 要下載映像檔和套件。之後啟動時不會再安裝任何東西。
 - 一份 OpenVPN 客戶端設定檔（`.ovpn`）。連上 VPN 之後，要能連到遠端主機。
 
 **遠端主機**（要借網路出去的那台）
@@ -112,7 +121,7 @@ docker compose up -d --build
 
 ## 確認能用
 
-在你的機器上，先看三個服務都在跑，VPN 也連上了：
+在你的機器上，先看四個容器都在跑（`netns`、`openvpn`、`tunnel`、`proxy`），VPN 也連上了：
 
 ```bash
 docker compose ps
@@ -146,7 +155,7 @@ export https_proxy=http://127.0.0.1:2080
 
 ## 設定參考
 
-`.env` 裡的六個欄位都要有值，`docker-compose.yml` 沒有預設值。少了的話，Compose 會警告 `The "…" variable is not set`。
+`.env` 裡前六個欄位都要有值，`docker-compose.yml` 沒有預設值。少了的話，Compose 會警告 `The "…" variable is not set`。`PROXY_BIND` 可以不填，預設是 `127.0.0.1`。
 
 | 欄位 | 範例值 | 用途 |
 |---|---|---|
@@ -156,13 +165,16 @@ export https_proxy=http://127.0.0.1:2080
 | `SSH_KEY_PATH` | `./keys/key-to-aws.pem` | SSH 私鑰，相對於 `docker-compose.yml` |
 | `OVPN_CONFIG_PATH` | `./openvpn/client.ovpn` | OpenVPN 設定檔 |
 | `PROXY_PORT` | `1080` | pproxy 在你的機器上（容器裡）聽的埠 |
+| `PROXY_BIND` | `127.0.0.1` | pproxy 聽的位址。預設只有 SSH 通道用得到；`0.0.0.0` 是舊版的行為，VPN 和 Docker 網路上的主機也能直接用。要包含 `127.0.0.1`，SSH 通道才連得到 |
 
 這些是寫死在 `docker-compose.yml` 裡的設定：
 
-- 容器名稱：`pi-openvpn-client`、`pi-tunnel-worker`、`pi-pproxy`。
-- `openvpn` 容器用的 DNS：`8.8.8.8`、`1.1.1.1`。
+- 容器名稱：`pi-netns`、`pi-openvpn-client`、`pi-tunnel-worker`、`pi-pproxy`。
+- 共用網路用的 DNS：`8.8.8.8`、`1.1.1.1`（設在 `netns`）。
 - autossh 偵測斷線用的埠：`20000`（`-M 20000`）。
-- 三個服務都設了 `restart: always`，開機或當掉之後 Docker 會自動重啟。
+- 斷線偵測：SSH 30 秒沒收到回應就斷開重連（`ServerAliveInterval 10`、`ServerAliveCountMax 3`），autossh 最多隔 30 秒就重試一次（`AUTOSSH_POLL=30`）。
+- 所有服務都設了 `restart: always`，開機或當掉之後 Docker 會自動重啟。
+- 固定的版本：Alpine 3.24.3（OpenVPN、autossh 都從這版安裝）、Python 3.12.16、pproxy 2.7.9。Dependabot 每週檢查有沒有新版，有的話會開 PR。
 
 ## 疑難排解
 
@@ -182,21 +194,26 @@ export https_proxy=http://127.0.0.1:2080
 
 遠端主機的 SSH 伺服器不允許轉發，或那個埠已經被佔用。檢查遠端的 `/etc/ssh/sshd_config` 裡的 `AllowTcpForwarding`，或換一個 `REMOTE_PORT`。`tunnel` 會自己重啟再試。
 
-**`tunnel` 日誌出現 `Network unreachable`**
+**`tunnel` 日誌出現 `Network unreachable` 或 `Connection refused`**
 
-VPN 還沒連上，或 `REMOTE_HOST` 不在 `.ovpn` 的 `route` 網段裡。先看 `docker compose logs openvpn`，再檢查 `route` 那幾行。
+VPN 還沒連上或斷線了，或 `REMOTE_HOST` 不在 `.ovpn` 的 `route` 網段裡。先看 `docker compose logs openvpn`，再檢查 `route` 那幾行。
 
 **`tunnel` 日誌出現 `Permission denied (publickey…)`**
 
 遠端主機不認得這把金鑰。確認公鑰加進了 `REMOTE_USER` 這個帳號的 `~/.ssh/authorized_keys`。
 
-**`openvpn` 容器重啟過之後，代理就不通了**
+**`openvpn` 重啟或 VPN 斷線之後，代理多久會恢復**
 
-`tunnel` 和 `proxy` 還留在舊的網路裡，看得到的只剩 `127.0.0.1`，不會自己恢復。手動重啟這兩個服務：
+不用做任何事，會自己恢復。實測的時間：
 
-```bash
-docker compose restart tunnel proxy
-```
+- `docker restart` openvpn，或容器當掉後被 Docker 重啟：大約 1 秒。這種短暫中斷，SSH 連線不會斷。
+- VPN 斷了 45 秒：VPN 恢復後大約 10 到 20 秒。這時 SSH 已經放棄舊連線，要重新登入。
+
+VPN 剛恢復時，`tunnel` 日誌可能連續出現幾次 `remote port forwarding failed for listen port 20000`。原因是遠端主機的 SSH 伺服器還沒放掉舊連線，實測約 10 秒內就會放掉。
+
+**透過 VPN 直接連代理（例如 `10.8.0.2:1080`）連不上了**
+
+代理現在預設只聽 `127.0.0.1`。在 `.env` 加上 `PROXY_BIND=0.0.0.0`，再執行 `docker compose up -d`。
 
 **代理連得上，但網站打不開**
 
@@ -206,9 +223,9 @@ docker compose restart tunnel proxy
 
 ## 安全注意事項
 
-- **代理沒有帳號密碼，而且聽所有網路介面。** pproxy 聽的是容器裡所有介面的 `1080` 埠。實測時，除了 SSH 通道，同一個 VPN 裡連得到你的機器的主機，以及同一個 Docker 網路上的容器，都能直接使用這個代理。只想讓 SSH 通道用的話，把 `docker-compose.yml` 裡的 `http+socks4+socks5://:${PROXY_PORT}` 改成 `http+socks4+socks5://127.0.0.1:${PROXY_PORT}`。
+- **代理沒有帳號密碼，預設只聽 `127.0.0.1`。** 只有走 SSH 通道進來的連線用得到。如果設成 `PROXY_BIND=0.0.0.0`，同一個 VPN 裡連得到你的機器的主機，以及同一個 Docker 網路上的容器，都能直接使用這個代理，測試裡確認過。
 - **遠端的 `2080` 只給遠端主機自己用。** SSH 伺服器預設只在本機開這個埠（`GatewayPorts no`），內網的其他主機連不到。除非你清楚會有誰連進來，不要打開 `GatewayPorts`。
-- **第一次連線不檢查遠端主機的身分。** `tunnel` 用了 `StrictHostKeyChecking no`。因為連線走在 VPN 裡，風險比較低，但仍然要知道有這件事。
+- **第一次連線不檢查遠端主機的身分。** `tunnel` 用了 `StrictHostKeyChecking no`。平常連線走在 VPN 裡，風險比較低。但 VPN 斷線時，連到 `REMOTE_HOST` 的封包會改走你的機器原本的網路（測試裡看得到），所以仍然要知道有這件事。
 - **金鑰和 VPN 設定不要進 git。** SSH 私鑰沒有密碼保護。`.env`、`keys/`、`openvpn/` 已經寫在 `.gitignore` 裡。建議在遠端主機開一個專用的帳號給這把金鑰。
 
 ## 測試
@@ -219,18 +236,27 @@ docker compose restart tunnel proxy
 sh tests/e2e/run.sh
 ```
 
-這個測試會用 Docker 架一台臨時的 OpenVPN 伺服器，它同時也是 SSH 主機，而且只能從 VPN 連到。接著把真的 `docker-compose.yml` 指過去，在那台主機上透過 `127.0.0.1:2080` 連 `https://example.com`。整個過程大約一分鐘，跑完會刪掉所有容器和臨時產生的憑證，不會讀取或修改你的 `.env`、`keys/`、`openvpn/`。
+這個測試會用 Docker 架一台臨時的 OpenVPN 伺服器，它同時也是 SSH 主機，而且只能從 VPN 連到。接著把真的 `docker-compose.yml` 指過去，然後確認：
 
-GitHub Actions 在每次 push 和 PR 都會跑這個測試。
+- 那台主機透過 `127.0.0.1:2080` 連得到 `https://example.com`，SSH 確實走 VPN。
+- 代理預設只給 SSH 通道用，VPN 和 Docker 網路上的其他主機連不到；設了 `PROXY_BIND=0.0.0.0` 才連得到。
+- `openvpn` 被重啟、被強制結束、斷線 45 秒之後，代理都會在限定時間內自己恢復。
+- `openvpn` 映像檔裡已經有 OpenVPN，啟動時沒有安裝任何套件。
+
+整個過程大約兩分半鐘，跑完會刪掉所有容器和臨時產生的憑證，不會讀取或修改你的 `.env`、`keys/`、`openvpn/`。
+
+GitHub Actions 在每次 push 和 PR 都會跑這個測試，另外還會重啟 Docker 本身，確認像重開機那樣全部重啟之後也會恢復。
 
 ## 專案結構
 
 ```text
 .
-├── docker-compose.yml   三個服務：openvpn、tunnel、proxy
+├── docker-compose.yml   四個服務：netns、openvpn、tunnel、proxy
 ├── .env.example         設定範例，複製成 .env 再改
-├── proxy/Dockerfile     pproxy 映像檔
+├── vpn/Dockerfile       OpenVPN 映像檔（netns 也用它）
+├── proxy/               pproxy 映像檔，版本在 requirements.txt
 ├── tunnel/Dockerfile    autossh 映像檔
+├── .github/             CI 和 Dependabot 設定
 ├── tests/e2e/           不需要真的 VPN 的端到端測試
 ├── docs/images/         README 的流程圖，原始 HTML 在 src/
 ├── keys/                放 SSH 金鑰，不進 git
