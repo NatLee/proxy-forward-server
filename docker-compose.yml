@@ -25,7 +25,8 @@ services:
     devices:
       - /dev/net/tun
     volumes:
-      # 檔案不存在時直接報錯，不讓 Docker 自動建一個同名的空資料夾
+      # 檔案不存在時直接報錯，不讓 Docker 自動建一個同名的空資料夾。
+      # target 要跟 vpn/Dockerfile 的 OVPN_CONFIG 一樣。
       - type: bind
         source: ${OVPN_CONFIG_PATH}
         target: /etc/openvpn/client.conf
