@@ -150,7 +150,7 @@
   <div id="pipe-sub">SSH 反向通道<br>由你的機器連出</div>
 
   <!-- panel B -->
-  <div id="shared"><div class="cap">三個容器共用 openvpn 的網路</div></div>
+  <div id="shared"><div class="cap">共用 netns 容器的網路，openvpn 重啟也不會斷</div></div>
   <div class="card" id="openvpn">
     <div class="name"><i></i>openvpn</div>
     <div class="desc">連上 VPN，建立通道（tun0）</div>
@@ -164,7 +164,7 @@
   <div class="card" id="proxy">
     <div class="name"><i></i>proxy <span class="chip">pproxy</span></div>
     <div class="desc">HTTP、SOCKS4、SOCKS5 代理</div>
-    <div class="val" style="margin-top:2px">:1080 <span style="color:var(--muted)">（PROXY_PORT）</span></div>
+    <div class="val" style="margin-top:2px">127.0.0.1:1080 <span style="color:var(--muted)">（PROXY_PORT）</span></div>
   </div>
 
   <!-- panel C -->

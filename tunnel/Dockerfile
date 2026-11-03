@@ -1,5 +1,5 @@
 # tunnel/Dockerfile
-FROM alpine:latest
+FROM alpine:3.24.3
 
 # 安裝 autossh 與 openssh-client
 RUN apk add --no-cache autossh openssh-client

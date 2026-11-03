@@ -1,0 +1,21 @@
+# Keeps the pinned versions fresh: Dependabot opens a PR when a new base image,
+# pproxy release or GitHub Action version comes out, and CI runs the e2e test on it.
+version: 2
+updates:
+  - package-ecosystem: docker
+    directories: ["/vpn", "/tunnel", "/proxy"]
+    schedule:
+      interval: weekly
+    groups:
+      base-images:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /proxy
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

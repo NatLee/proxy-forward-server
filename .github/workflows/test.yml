@@ -35,4 +35,8 @@ jobs:
           test ! -e keys/key-to-aws.pem
 
       - name: End-to-end test (throwaway VPN server + SSH host)
+        # The runner is disposable, so the test may also restart the Docker daemon
+        # to check that everything comes back after a reboot-like restart.
+        env:
+          E2E_RESTART_DOCKER: "1"
         run: sh tests/e2e/run.sh

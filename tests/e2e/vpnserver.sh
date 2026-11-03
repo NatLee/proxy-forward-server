@@ -7,7 +7,8 @@ apk add --no-cache openvpn openssh-server curl >/dev/null
 ssh-keygen -A >/dev/null
 
 # The SSH user from .env (REMOTE_USER=ubuntu); '*' = no password, key login only.
-adduser -D ubuntu
+# (idempotent, so the container can be restarted)
+id ubuntu >/dev/null 2>&1 || adduser -D ubuntu
 echo 'ubuntu:*' | chpasswd -e
 install -d -m 700 -o ubuntu -g ubuntu /home/ubuntu/.ssh
 install -m 600 -o ubuntu -g ubuntu /srv/server/authorized_keys /home/ubuntu/.ssh/authorized_keys

@@ -3,14 +3,19 @@
 # Paths are relative to the repo root (run.sh passes --project-directory).
 services:
   vpnserver:
-    image: alpine:3.22
+    image: alpine:3.24.3
     container_name: proxy-forward-e2e-vpnserver
+    # Comes back after a Docker daemon restart, like a real server would.
+    restart: always
     cap_add: [NET_ADMIN]
     devices: [/dev/net/tun]
     volumes:
       - ./tests/e2e/.work/server:/srv/server:ro
       - ./tests/e2e/vpnserver.sh:/vpnserver.sh:ro
     command: ["sh", "/vpnserver.sh"]
+
+  netns:
+    container_name: proxy-forward-e2e-netns
 
   openvpn:
     container_name: proxy-forward-e2e-openvpn
