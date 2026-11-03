@@ -42,7 +42,8 @@ services:
       - netns
       - openvpn
     environment:
-      # 連線失敗時，autossh 最多隔 30 秒就再試一次（預設最多會拖到 10 分鐘）
+      # 連不上時一直重試，連第一次也一樣（例如 VPN 還沒連上）；重試間隔最多 30 秒
+      AUTOSSH_GATETIME: "0"
       AUTOSSH_POLL: "30"
     volumes:
       - type: bind
@@ -51,19 +52,29 @@ services:
         read_only: true
         bind:
           create_host_path: false
-    # ServerAlive：遠端 30 秒沒回應就斷開，讓 autossh 重新連線
+    # 斷線偵測只靠 SSH 自己的 ServerAlive（10 秒問一次，30 秒沒回應就斷開重連），
+    # 所以 autossh 用 -M 0，不另外占用監控埠。
+    # 反向通道接到 127.0.0.1：proxy 跟 tunnel 在同一個網路裡（netns）。
     command:
-      - /bin/sh
-      - -c
-      - >-
-        sleep 10 && exec autossh -M 20000 -N
-        -o 'StrictHostKeyChecking no'
-        -o 'ExitOnForwardFailure yes'
-        -o 'ServerAliveInterval 10'
-        -o 'ServerAliveCountMax 3'
-        -R ${REMOTE_PORT}:127.0.0.1:${PROXY_PORT}
-        -i /key.pem
-        ${REMOTE_USER}@${REMOTE_HOST}
+      - autossh
+      - -M
+      - "0"
+      - -N
+      - -o
+      - StrictHostKeyChecking no
+      - -o
+      - ExitOnForwardFailure yes
+      - -o
+      - ConnectTimeout 10
+      - -o
+      - ServerAliveInterval 10
+      - -o
+      - ServerAliveCountMax 3
+      - -R
+      - ${REMOTE_PORT}:127.0.0.1:${PROXY_PORT}
+      - -i
+      - /key.pem
+      - ${REMOTE_USER}@${REMOTE_HOST}
 
   # HTTP/SOCKS4/SOCKS5 代理服務器 (pproxy)
   proxy:
