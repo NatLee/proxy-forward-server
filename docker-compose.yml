@@ -1,17 +1,29 @@
 services:
 
+  # 持有 openvpn、tunnel、proxy 共用的網路，自己什麼都不做。
+  # openvpn 重啟時這個網路還在，tunnel 和 proxy 不會卡在已經消失的網路裡，也就不用跟著重啟。
+  netns:
+    build: ./vpn
+    container_name: pi-netns
+    restart: always
+    init: true
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    command: [ "sleep", "infinity" ]
+
   # OpenVPN 客戶端
   openvpn:
     build: ./vpn
     container_name: pi-openvpn-client
     restart: always
+    network_mode: "service:netns"
+    depends_on:
+      - netns
     cap_add:
       - NET_ADMIN
     devices:
       - /dev/net/tun
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     volumes:
       # 檔案不存在時直接報錯，不讓 Docker 自動建一個同名的空資料夾
       - type: bind
@@ -25,9 +37,13 @@ services:
     build: ./tunnel
     container_name: pi-tunnel-worker
     restart: always
-    network_mode: "service:openvpn"
+    network_mode: "service:netns"
     depends_on:
+      - netns
       - openvpn
+    environment:
+      # 連線失敗時，autossh 最多隔 30 秒就再試一次（預設最多會拖到 10 分鐘）
+      AUTOSSH_POLL: "30"
     volumes:
       - type: bind
         source: ${SSH_KEY_PATH}
@@ -35,17 +51,28 @@ services:
         read_only: true
         bind:
           create_host_path: false
-    command: >
-      /bin/sh -c " sleep 10 && autossh -M 20000 -N \ -o 'StrictHostKeyChecking no' \ -o 'ExitOnForwardFailure yes' \ -R ${REMOTE_PORT}:127.0.0.1:${PROXY_PORT} \ -i /key.pem \ ${REMOTE_USER}@${REMOTE_HOST}"
+    # ServerAlive：遠端 30 秒沒回應就斷開，讓 autossh 重新連線
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        sleep 10 && exec autossh -M 20000 -N
+        -o 'StrictHostKeyChecking no'
+        -o 'ExitOnForwardFailure yes'
+        -o 'ServerAliveInterval 10'
+        -o 'ServerAliveCountMax 3'
+        -R ${REMOTE_PORT}:127.0.0.1:${PROXY_PORT}
+        -i /key.pem
+        ${REMOTE_USER}@${REMOTE_HOST}
 
   # HTTP/SOCKS4/SOCKS5 代理服務器 (pproxy)
   proxy:
     build: ./proxy
     container_name: pi-pproxy
     restart: always
-    network_mode: "service:openvpn"
+    network_mode: "service:netns"
     tty: true
     stdin_open: true
     depends_on:
-      - openvpn
+      - netns
     command: [ "pproxy", "-l", "http+socks4+socks5://:${PROXY_PORT}", "-vv" ]
