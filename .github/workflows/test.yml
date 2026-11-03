@@ -1,0 +1,38 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check docker-compose.yml with the example settings
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+
+      - name: Build the images
+        run: docker compose build
+
+      - name: A missing .ovpn or SSH key stops compose with a clear error
+        run: |
+          # .env.example points at ./openvpn/client.ovpn and ./keys/key-to-aws.pem,
+          # which don't exist here.
+          if out=$(docker compose up -d 2>&1); then status=0; else status=$?; fi
+          docker compose down -t 1 >/dev/null 2>&1 || true
+          echo "$out"
+          test "$status" -ne 0
+          echo "$out" | grep -q "bind source path does not exist"
+          # ...and Docker must not have created empty folders in their place.
+          test ! -e openvpn/client.ovpn
+          test ! -e keys/key-to-aws.pem
+
+      - name: End-to-end test (throwaway VPN server + SSH host)
+        run: sh tests/e2e/run.sh

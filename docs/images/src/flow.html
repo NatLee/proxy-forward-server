@@ -1,0 +1,209 @@
+<!doctype html>
+<!--
+  README flow diagram. Render the light and dark versions (#dark picks the dark theme) with a
+  Chromium-based browser, e.g.
+    msedge --headless=new --disable-gpu --hide-scrollbars --force-device-scale-factor=2
+           --window-size=1000,600 --default-background-color=00000000 --virtual-time-budget=8000
+           --screenshot=flow-dark.png "file:///…/flow.html#dark"
+  then shrink it to a 256-colour PNG (about 130 KB instead of 500 KB):
+    magick flow-dark.png +dither -colors 256 -strip PNG8:flow-dark.png
+  Every name, port and path here matches docker-compose.yml and .env.example.
+-->
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>proxy-forward-server flow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700;900&display=block" rel="stylesheet">
+<style>
+  :root {
+    --bg: #ffffff; --bg2: #f6f8fa; --ink: #1f2328; --muted: #59636e; --line: #d1d9e0; --card: #ffffff;
+    --blue: #0969da; --green: #1a7f37; --purple: #8250df; --wire: #8c959f;
+    --pipe: rgba(26,127,55,.10); --pipe-line: rgba(26,127,55,.55);
+    --tint1: rgba(9,105,218,.08); --tint2: rgba(26,127,55,.07);
+    --shadow: 0 1px 2px rgba(31,35,40,.06), 0 6px 18px rgba(31,35,40,.06);
+  }
+  .dark {
+    --bg: #0d1117; --bg2: #151b23; --ink: #f0f6fc; --muted: #9198a1; --line: #3d444d; --card: #151b23;
+    --blue: #4493f8; --green: #3fb950; --purple: #ab7df8; --wire: #7d8590;
+    --pipe: rgba(63,185,80,.12); --pipe-line: rgba(63,185,80,.55);
+    --tint1: rgba(68,147,248,.12); --tint2: rgba(63,185,80,.08);
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: transparent; }
+  body { width: 1000px; height: 600px; color: var(--ink);
+         font-family: Inter, "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+  .frame { position: relative; width: 1000px; height: 600px; border-radius: 22px; overflow: hidden;
+           border: 1px solid var(--line);
+           background: radial-gradient(520px 300px at 50% 0%, var(--tint1), transparent 70%),
+                       radial-gradient(420px 260px at 100% 100%, var(--tint2), transparent 70%), var(--bg); }
+  code, .mono { font-family: "JetBrains Mono", Consolas, monospace; }
+
+  header { position: absolute; left: 36px; top: 28px; }
+  h1 { margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.1; }
+  .tag { margin: 8px 0 0; font-size: 16px; color: var(--muted); }
+  .tag b { color: var(--ink); font-weight: 700; }
+
+  .legend { position: absolute; right: 36px; top: 34px; font-size: 13px; color: var(--muted);
+            display: grid; gap: 8px; }
+  .legend div { display: flex; align-items: center; gap: 10px; }
+  .legend svg { flex: none; }
+
+  .panel { position: absolute; top: 120px; height: 452px; border-radius: 16px; border: 1px solid var(--line);
+           background: color-mix(in srgb, var(--bg2) 70%, transparent); }
+  .ptitle { position: absolute; left: 16px; top: 14px; }
+  .ptitle b { font-size: 15px; font-weight: 700; }
+  .ptitle span { display: block; font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+  #pa { left: 28px; width: 262px; }
+  #pb { left: 372px; width: 360px; }
+  #pc { left: 800px; width: 172px; }
+
+  .card { position: absolute; background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+          box-shadow: var(--shadow); padding: 10px 12px; }
+  .name { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .name i { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); flex: none; }
+  .chip { font-family: "JetBrains Mono", Consolas, monospace; font-size: 11.5px; font-weight: 500;
+          padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .desc { font-size: 12.5px; color: var(--muted); margin-top: 4px; line-height: 1.45; }
+  .val { font-family: "JetBrains Mono", Consolas, monospace; font-size: 12.5px; margin-top: 5px; white-space: nowrap; }
+  .note { position: absolute; border: 1px dashed var(--line); border-radius: 12px; padding: 9px 12px;
+          font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+  .note code { font-size: 11.5px; color: var(--ink); }
+
+  /* panel A: the private network */
+  #host { left: 44px; top: 190px; width: 230px; height: 236px; padding: 12px; }
+  .inner { position: absolute; left: 12px; right: 12px; background: var(--bg2); border: 1px solid var(--line);
+           border-radius: 10px; padding: 8px 10px; }
+  #app { top: 44px; }
+  #port { top: 136px; }
+  #routenote { left: 44px; top: 442px; width: 230px; }
+
+  /* panel B: your machine */
+  #shared { position: absolute; left: 388px; top: 186px; width: 328px; height: 370px;
+            border: 1.5px dashed var(--line); border-radius: 14px; }
+  #shared .cap { position: absolute; left: 0; right: 0; bottom: 10px; text-align: center; font-size: 12.5px; color: var(--muted); }
+  #openvpn { left: 404px; top: 200px; width: 296px; height: 72px; }
+  #openvpn .name i { background: var(--green); }
+  #tunnel  { left: 404px; top: 312px; width: 296px; height: 76px; }
+  #proxy   { left: 404px; top: 428px; width: 296px; height: 76px; }
+
+  /* panel C: where the traffic ends up */
+  #nopull { left: 812px; top: 214px; width: 148px; }
+  #inet { left: 812px; top: 394px; width: 148px; }
+  #lan  { left: 812px; top: 490px; width: 148px; }
+  #inet .name i, #lan .name i { background: var(--purple); }
+
+  /* VPN pipe between the private network and your machine */
+  #pipe-label { position: absolute; left: 282px; top: 300px; width: 114px; text-align: center;
+                font-size: 12.5px; font-weight: 700; color: var(--green); }
+  #pipe-sub { position: absolute; left: 276px; top: 378px; width: 126px; text-align: center;
+              font-size: 11.5px; color: var(--muted); line-height: 1.35; }
+
+  svg.wires { position: absolute; inset: 0; pointer-events: none; }
+  .req { fill: none; stroke: var(--blue); stroke-width: 2.4; stroke-linecap: round; }
+  .reqhead { fill: var(--blue); }
+  .vpn { fill: var(--pipe); stroke: var(--pipe-line); stroke-width: 1.5; }
+  .badge { position: absolute; width: 22px; height: 22px; border-radius: 50%; background: var(--blue); color: #fff;
+           font: 700 12.5px/22px Inter, sans-serif; text-align: center; box-shadow: 0 0 0 3px var(--bg); }
+  .dark .badge { color: #0d1117; }
+  .blabel { position: absolute; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .blabel code { color: var(--ink); }
+</style>
+</head>
+<body>
+<script>if (location.hash === '#dark') document.documentElement.className = 'dark';</script>
+<div class="frame">
+  <header>
+    <h1>proxy-forward-server</h1>
+    <p class="tag">讓內網裡的主機，借用<b>你這台機器</b>的網路連出去。</p>
+  </header>
+
+  <div class="legend">
+    <div><svg width="34" height="10"><path d="M2 5 H26" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round"/><path d="M33 5 l-8 -4.5 v9 z" fill="var(--blue)"/></svg>請求怎麼走（① → ④）</div>
+    <div><svg width="34" height="14"><rect x="1" y="1" width="32" height="12" rx="6" fill="var(--pipe)" stroke="var(--pipe-line)" stroke-width="1.5"/></svg>OpenVPN 通道，SSH 走在裡面</div>
+  </div>
+
+  <!-- panels -->
+  <div class="panel" id="pa"><div class="ptitle"><b>內網</b><span>例如 AWS VPC（172.31.0.0/16）</span></div></div>
+  <div class="panel" id="pb"><div class="ptitle"><b>你的機器</b><span>例如 Raspberry Pi，用 docker compose 跑</span></div></div>
+  <div class="panel" id="pc"><div class="ptitle"><b>目的地</b><span>這台機器連得到的地方</span></div></div>
+
+
+  <!-- panel A -->
+  <div class="card" id="host">
+    <div class="name"><i></i>遠端主機 <span class="chip">REMOTE_HOST</span></div>
+    <div class="inner" id="app">
+      <div class="name" style="font-size:13px">你的程式</div>
+      <div class="val">socks5h://127.0.0.1:2080</div>
+    </div>
+    <div class="inner" id="port">
+      <div class="name" style="font-size:13px">sshd 開的埠</div>
+      <div class="val">127.0.0.1:2080</div>
+      <div class="desc" style="margin-top:2px">REMOTE_PORT，只在本機開放</div>
+    </div>
+  </div>
+  <div class="note" id="routenote">REMOTE_HOST 要落在 <code>client.ovpn</code> 的 <code>route</code> 網段裡，SSH 才會走 VPN。</div>
+
+  <!-- VPN pipe labels -->
+  <div id="pipe-label">OpenVPN 通道</div>
+  <div id="pipe-sub">SSH 反向通道<br>由你的機器連出</div>
+
+  <!-- panel B -->
+  <div id="shared"><div class="cap">三個容器共用 openvpn 的網路</div></div>
+  <div class="card" id="openvpn">
+    <div class="name"><i></i>openvpn</div>
+    <div class="desc">連上 VPN，建立通道（tun0）</div>
+    <div class="val" style="margin-top:2px">./openvpn/client.ovpn</div>
+  </div>
+  <div class="card" id="tunnel">
+    <div class="name"><i></i>tunnel <span class="chip">autossh</span></div>
+    <div class="desc">登入遠端主機，開 SSH 反向通道</div>
+    <div class="val" style="margin-top:2px">-R 2080:127.0.0.1:1080</div>
+  </div>
+  <div class="card" id="proxy">
+    <div class="name"><i></i>proxy <span class="chip">pproxy</span></div>
+    <div class="desc">HTTP、SOCKS4、SOCKS5 代理</div>
+    <div class="val" style="margin-top:2px">:1080 <span style="color:var(--muted)">（PROXY_PORT）</span></div>
+  </div>
+
+  <!-- panel C -->
+  <div class="note" id="nopull"><code>client.ovpn</code> 加上 <code>route-nopull</code>：只有列出的網段走 VPN，其他流量照常走這台機器的網路。</div>
+  <div class="card" id="inet">
+    <div class="name"><i></i>網際網路</div>
+    <div class="desc">對方看到的是<br>這台機器的 IP</div>
+  </div>
+  <div class="card" id="lan">
+    <div class="name"><i></i>區網</div>
+    <div class="desc">例如 192.168.x.x</div>
+  </div>
+
+  <!-- wires (drawn on top of the cards) -->
+  <svg class="wires" width="1000" height="600">
+    <!-- VPN pipe: from the remote host to the shared network of your machine -->
+    <rect class="vpn" x="262" y="330" width="138" height="40" rx="20"/>
+    <!-- ② SSH reverse tunnel inside the pipe: remote 127.0.0.1:2080 -> tunnel container -->
+    <path class="req" d="M262 350 H396"/>
+    <path class="reqhead" d="M404 350 l-9 -5 v10 z"/>
+    <!-- ① app -> 127.0.0.1:2080 -->
+    <path class="req" d="M159 296 V318"/>
+    <path class="reqhead" d="M159 326 l-5 -9 h10 z"/>
+    <!-- ③ tunnel -> proxy on 127.0.0.1:1080 -->
+    <path class="req" d="M552 388 V418"/>
+    <path class="reqhead" d="M552 426 l-5 -9 h10 z"/>
+    <!-- ④ proxy -> internet / LAN, over this machine's own connection -->
+    <path class="req" d="M700 466 C 750 466, 760 436, 802 436"/>
+    <path class="reqhead" d="M810 436 l-9 -5 v10 z"/>
+    <path class="req" d="M700 466 C 750 466, 760 521, 802 521"/>
+    <path class="reqhead" d="M810 521 l-9 -5 v10 z"/>
+  </svg>
+
+  <!-- step badges -->
+  <div class="badge" style="left:172px; top:296px">1</div>
+  <div class="badge" style="left:320px; top:339px">2</div>
+  <div class="badge" style="left:564px; top:392px">3</div>
+  <div class="blabel" style="left:592px; top:396px"><code>127.0.0.1:1080</code></div>
+  <div class="badge" style="left:735px; top:455px">4</div>
+</div>
+</body>
+</html>

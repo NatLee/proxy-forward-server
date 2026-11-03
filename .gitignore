@@ -10,3 +10,5 @@ openvpn/
 # Python / Cache
 __pycache__/
 *.py[cod]
+# End-to-end test scratch files (tests/e2e/run.sh)
+tests/e2e/.work/

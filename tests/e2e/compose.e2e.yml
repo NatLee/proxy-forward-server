@@ -1,0 +1,23 @@
+# Overlay for tests/e2e/run.sh: adds a throwaway remote host and renames the
+# containers, so the test never touches a real deployment on the same machine.
+# Paths are relative to the repo root (run.sh passes --project-directory).
+services:
+  vpnserver:
+    image: alpine:3.22
+    container_name: proxy-forward-e2e-vpnserver
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun]
+    volumes:
+      - ./tests/e2e/.work/server:/srv/server:ro
+      - ./tests/e2e/vpnserver.sh:/vpnserver.sh:ro
+    command: ["sh", "/vpnserver.sh"]
+
+  openvpn:
+    container_name: proxy-forward-e2e-openvpn
+    depends_on: [vpnserver]
+
+  tunnel:
+    container_name: proxy-forward-e2e-tunnel
+
+  proxy:
+    container_name: proxy-forward-e2e-proxy
