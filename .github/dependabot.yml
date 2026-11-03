@@ -9,6 +9,11 @@ updates:
     groups:
       base-images:
         patterns: ["*"]
+    ignore:
+      # pproxy 2.7.9 (the latest release, from 2024) crashes on Python 3.14+ with
+      # "There is no current event loop", so only take 3.12.x patch releases.
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: pip
     directory: /proxy
