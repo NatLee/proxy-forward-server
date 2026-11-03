@@ -75,4 +75,6 @@ services:
     stdin_open: true
     depends_on:
       - netns
-    command: [ "pproxy", "-l", "http+socks4+socks5://:${PROXY_PORT}", "-vv" ]
+    # 預設只聽 127.0.0.1：只有走 SSH 通道進來的連線用得到。
+    # PROXY_BIND=0.0.0.0 是舊版的行為（VPN 和 Docker 網路上的主機也能直接用，而且沒有帳密）。
+    command: [ "pproxy", "-l", "http+socks4+socks5://${PROXY_BIND:-127.0.0.1}:${PROXY_PORT}", "-vv" ]
