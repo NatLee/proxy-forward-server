@@ -1,13 +1,15 @@
 #!/bin/sh
-# Runs inside an Alpine container (see run.sh) and writes throwaway test
-# material to /out:
+# Runs in the `gen` service of compose.e2e.yml (built from vpn/Dockerfile) and
+# writes throwaway test material to /out:
 #   server/   CA + server cert/key and server.conf for the test OpenVPN server,
 #             plus authorized_keys for the test SSH user
 #   openvpn/  client.ovpn, written the way the README recommends
 #   keys/     the SSH key pair the tunnel uses
 # Nothing here is a real credential; run.sh deletes it all afterwards.
+# The VPN subnet comes from run.sh (E2E_VPN_NET, e.g. 10.8.0 for 10.8.0.0/24).
 set -eu
-apk add --no-cache easy-rsa openvpn openssh-keygen >/dev/null
+: "${E2E_VPN_NET:?set by run.sh}"
+apk add --no-cache easy-rsa openssh-keygen >/dev/null
 
 out=/out
 mkdir -p "$out/pki-work" "$out/server" "$out/keys" "$out/openvpn"
@@ -19,12 +21,12 @@ for step in init-pki "build-ca nopass" "build-server-full server nopass" "build-
 done
 cp pki/ca.crt pki/issued/server.crt pki/private/server.key "$out/server/"
 
-cat > "$out/server/server.conf" <<'CONF'
+cat > "$out/server/server.conf" <<CONF
 port 1194
 proto udp
 dev tun
 topology subnet
-server 10.8.0.0 255.255.255.0
+server ${E2E_VPN_NET}.0 255.255.255.0
 ca /srv/server/ca.crt
 cert /srv/server/server.crt
 key /srv/server/server.key
@@ -37,7 +39,7 @@ verb 3
 CONF
 
 {
-  cat <<'CONF'
+  cat <<CONF
 client
 dev tun
 proto udp
@@ -50,7 +52,7 @@ verb 3
 # Same advice as the README: ignore the routes the server pushes,
 # send only the VPN subnet through the tunnel.
 route-nopull
-route 10.8.0.0 255.255.255.0 vpn_gateway
+route ${E2E_VPN_NET}.0 255.255.255.0 vpn_gateway
 CONF
   echo "<ca>"; cat pki/ca.crt; echo "</ca>"
   echo "<cert>"; sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' pki/issued/client.crt; echo "</cert>"

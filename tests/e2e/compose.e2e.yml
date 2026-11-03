@@ -1,14 +1,27 @@
-# Overlay for tests/e2e/run.sh: adds a throwaway remote host and renames the
-# containers, so the test never touches a real deployment on the same machine.
+# Overlay for tests/e2e/run.sh: adds a throwaway remote host and a helper that
+# makes the test certificates, and renames the containers so the test never
+# touches a real deployment on the same machine. Both test services build from
+# vpn/Dockerfile, so they run on the same pinned Alpine as the project and
+# Dependabot keeps them up to date together. Settings come from run.sh.
 # Paths are relative to the repo root (run.sh passes --project-directory).
 services:
+  gen:
+    build: ./vpn
+    profiles: [setup] # only runs through `compose run gen`
+    environment: [HOST_UID, HOST_GID, E2E_VPN_NET]
+    volumes:
+      - ./tests/e2e/.work:/out
+      - ./tests/e2e/gen.sh:/gen.sh:ro
+    command: ["sh", "/gen.sh"]
+
   vpnserver:
-    image: alpine:3.24.3
+    build: ./vpn
     container_name: proxy-forward-e2e-vpnserver
     # Comes back after a Docker daemon restart, like a real server would.
     restart: always
     cap_add: [NET_ADMIN]
     devices: [/dev/net/tun]
+    environment: [E2E_VPN_NET, E2E_SSH_USER]
     volumes:
       - ./tests/e2e/.work/server:/srv/server:ro
       - ./tests/e2e/vpnserver.sh:/vpnserver.sh:ro

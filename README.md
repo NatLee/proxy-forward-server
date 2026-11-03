@@ -11,7 +11,7 @@
 > [!IMPORTANT]
 > **升級注意（2026-11）**：代理現在預設只聽 `127.0.0.1`，只有 SSH 通道用得到。如果你原本透過 VPN 直接連代理（例如 `10.8.0.2:1080`），在 `.env` 加一行 `PROXY_BIND=0.0.0.0` 就會恢復舊的行為。
 >
-> 這一版也多了一個 `netns` 容器，`openvpn` 改用 repo 裡的映像檔，所以更新後要重新 build 一次：`docker compose up -d --build`。
+> 這一版也多了一個 `netns` 容器，`openvpn` 改用 repo 裡的映像檔，所以更新後要重新 build 一次：`docker compose up -d --build`。遠端主機也不再需要空出 `20000` 埠。
 
 ## 什麼時候用得到
 
@@ -56,7 +56,7 @@
 
 - 開著 SSH 伺服器，而且允許連接埠轉發（`AllowTcpForwarding yes`，Ubuntu 和 Debian 預設就是）。
 - 一個可以用金鑰登入的帳號，範例是 `ubuntu`。
-- 本機的 `2080` 和 `20000` 埠沒被佔用。`2080` 是給程式用的代理埠，`20000` 是 autossh 用來偵測斷線的埠。
+- 本機的 `2080` 埠沒被佔用，這是給程式用的代理埠（`REMOTE_PORT`）。
 
 ## 安裝與啟動
 
@@ -129,7 +129,7 @@ docker compose logs openvpn | grep "Initialization Sequence Completed"
 docker compose logs tunnel
 ```
 
-`tunnel` 會先等 10 秒，讓 VPN 有時間連上，再登入遠端主機。它的日誌除了第一次連線時的 `Permanently added '…' to the list of known hosts`，不應該一直出現錯誤。
+`tunnel` 會一直重試，直到 VPN 連上、登入遠端主機為止。剛啟動時日誌出現幾次連線失敗是正常的；連上之後，除了第一次連線時的 `Permanently added '…' to the list of known hosts`，不應該一直出現錯誤。
 
 接著到遠端主機上，確認代理埠開了，再實際走一次代理：
 
@@ -171,8 +171,8 @@ export https_proxy=http://127.0.0.1:2080
 
 - 容器名稱：`pi-netns`、`pi-openvpn-client`、`pi-tunnel-worker`、`pi-pproxy`。
 - 共用網路用的 DNS：`8.8.8.8`、`1.1.1.1`（設在 `netns`）。
-- autossh 偵測斷線用的埠：`20000`（`-M 20000`）。
-- 斷線偵測：SSH 30 秒沒收到回應就斷開重連（`ServerAliveInterval 10`、`ServerAliveCountMax 3`），autossh 最多隔 30 秒就重試一次（`AUTOSSH_POLL=30`）。
+- 斷線偵測：SSH 每 10 秒確認一次遠端還在，30 秒沒回應就斷開重連（`ServerAliveInterval 10`、`ServerAliveCountMax 3`）。autossh 不另外占用監控埠（`-M 0`）。
+- 重試：連不上時 autossh 會一直重試，連第一次也一樣（`AUTOSSH_GATETIME=0`）。每次連線最多等 10 秒（`ConnectTimeout 10`），兩次重試最多隔 30 秒（`AUTOSSH_POLL=30`）。
 - 所有服務都設了 `restart: always`，開機或當掉之後 Docker 會自動重啟。
 - 固定的版本：Alpine 3.24.3（OpenVPN、autossh 都從這版安裝）、Python 3.12.16、pproxy 2.7.9。Dependabot 每週檢查有沒有新版，有的話會開 PR。
 
@@ -190,7 +190,7 @@ export https_proxy=http://127.0.0.1:2080
 
 你的 VPN 要帳號密碼（`.ovpn` 裡有 `auth-user-pass`），但容器裡沒辦法輸入。目前的 `docker-compose.yml` 只掛載 `.ovpn` 一個檔案。要用這種 VPN，得自己多掛載一個帳密檔，並讓 `auth-user-pass` 指向它（這個做法本專案沒有實測）。
 
-**`tunnel` 日誌出現 `remote port forwarding failed for listen port 20000`（或 `2080`）**
+**`tunnel` 日誌出現 `remote port forwarding failed for listen port 2080`**
 
 遠端主機的 SSH 伺服器不允許轉發，或那個埠已經被佔用。檢查遠端的 `/etc/ssh/sshd_config` 裡的 `AllowTcpForwarding`，或換一個 `REMOTE_PORT`。`tunnel` 會自己重啟再試。
 
@@ -207,10 +207,10 @@ VPN 還沒連上或斷線了，或 `REMOTE_HOST` 不在 `.ovpn` 的 `route` 網�
 不用做任何事，會自己恢復。實測的時間：
 
 - `docker restart` openvpn，或容器當掉後被 Docker 重啟：大約 1 秒。這種短暫中斷，SSH 連線不會斷。
-- VPN 斷了 45 秒：VPN 恢復後大約 10 到 30 秒。這時 SSH 已經放棄舊連線，要重新登入。
+- VPN 斷了 45 秒：VPN 恢復後幾秒內（實測 2 到 4 秒）。這時 SSH 已經放棄舊連線，會重新登入一次。
 - 重啟 Docker 本身（跟重開機一樣，所有容器一起重啟）：大約 10 秒。
 
-VPN 剛恢復時，`tunnel` 日誌可能連續出現幾次 `remote port forwarding failed for listen port 20000`。原因是遠端主機的 SSH 伺服器還沒放掉舊連線，實測約 10 秒內就會放掉。
+VPN 剛恢復時，`tunnel` 日誌如果出現 `remote port forwarding failed for listen port 2080`，代表遠端主機的 SSH 伺服器還沒放掉舊連線。autossh 會繼續重試，等舊連線放掉就會接上。
 
 `openvpn` 日誌出現 `removing leftover network interface tun0` 也是正常的。OpenVPN 用核心加速（DCO）時，如果上一次被強制結束，`tun0` 會留下來；啟動前會先把它清掉。
 
