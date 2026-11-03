@@ -184,11 +184,18 @@ crash_openvpn_and_wait() {
   pid=$(docker inspect -f '{{.State.Pid}}' proxy-forward-e2e-openvpn)
   # SIGKILL from outside, like an OOM kill; the restart policy brings it back.
   docker run --rm --pid=host "$pinned_alpine" kill -9 "$pid"
-  if ! wait_for_proxy 30; then
+  if ! took=$(wait_for_proxy 30); then
+    echo "$took"
     show_openvpn_state
     return 1
   fi
-  [ "$(restarts proxy-forward-e2e-openvpn)" -gt "$before" ]
+  [ "$(restarts proxy-forward-e2e-openvpn)" -gt "$before" ] || return 1
+  # With kernel DCO the killed OpenVPN leaves tun0 behind; start-openvpn removes it.
+  if docker logs --since 2m proxy-forward-e2e-openvpn 2>&1 | grep -q "removing leftover"; then
+    echo "$took; a leftover DCO interface was removed first"
+  else
+    echo "$took"
+  fi
 }
 long_vpn_outage_and_wait() {
   # 45 s is longer than both SSH (ServerAlive, 30 s) and autossh (AUTOSSH_POLL, 30 s)
@@ -221,9 +228,12 @@ fi
 
 # --- PROXY_BIND=0.0.0.0 brings the old behaviour back ----------------------------
 
+# Same as the README: change .env, then `docker compose up -d` for the whole
+# project. (Naming only `proxy` can make Compose recreate netns without
+# recreating openvpn and tunnel, which strands them in the old network.)
 write_env "PROXY_BIND=0.0.0.0"
-compose up -d proxy 2>&1 | grep -E 'Recreate|Start|Running' || true
-check "PROXY_BIND=0.0.0.0: the remote host still works through the tunnel" wait_for_proxy 30
+compose up -d 2>&1 | grep -E 'Recreated' || true
+check "PROXY_BIND=0.0.0.0: the remote host still works through the tunnel" wait_for_proxy 60
 check "PROXY_BIND=0.0.0.0: a VPN peer can use the proxy directly again" vpn_peer_can_use_proxy
 check "PROXY_BIND=0.0.0.0: another container on the Docker network can use it again" \
   docker_neighbour_can_use_proxy
