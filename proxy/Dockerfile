@@ -1,5 +1,5 @@
 # HTTP/SOCKS4/SOCKS5 代理服務器 (pproxy)
-FROM python:3.12.16-alpine3.24
+FROM python:3.15.0-alpine3.24
 
 # 安裝 pproxy（輕量級多協議代理，支援 ARM64），版本固定在 requirements.txt
 COPY requirements.txt /tmp/requirements.txt
