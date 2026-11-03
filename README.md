@@ -207,13 +207,18 @@ VPN 還沒連上或斷線了，或 `REMOTE_HOST` 不在 `.ovpn` 的 `route` 網�
 不用做任何事，會自己恢復。實測的時間：
 
 - `docker restart` openvpn，或容器當掉後被 Docker 重啟：大約 1 秒。這種短暫中斷，SSH 連線不會斷。
-- VPN 斷了 45 秒：VPN 恢復後大約 10 到 20 秒。這時 SSH 已經放棄舊連線，要重新登入。
+- VPN 斷了 45 秒：VPN 恢復後大約 10 到 30 秒。這時 SSH 已經放棄舊連線，要重新登入。
+- 重啟 Docker 本身（跟重開機一樣，所有容器一起重啟）：大約 10 秒。
 
 VPN 剛恢復時，`tunnel` 日誌可能連續出現幾次 `remote port forwarding failed for listen port 20000`。原因是遠端主機的 SSH 伺服器還沒放掉舊連線，實測約 10 秒內就會放掉。
+
+`openvpn` 日誌出現 `removing leftover network interface tun0` 也是正常的。OpenVPN 用核心加速（DCO）時，如果上一次被強制結束，`tun0` 會留下來；啟動前會先把它清掉。
 
 **透過 VPN 直接連代理（例如 `10.8.0.2:1080`）連不上了**
 
 代理現在預設只聽 `127.0.0.1`。在 `.env` 加上 `PROXY_BIND=0.0.0.0`，再執行 `docker compose up -d`。
+
+改了 `.env` 之後，請用 `docker compose up -d` 套用到整個專案，不要只寫 `docker compose up -d proxy`。只指定一個服務時，Compose 可能會重建 `netns`，卻沒有一起重建 `openvpn` 和 `tunnel`，它們就會卡在舊的網路裡（測試裡遇過）。
 
 **代理連得上，但網站打不開**
 
