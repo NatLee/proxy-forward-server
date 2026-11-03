@@ -23,16 +23,17 @@ jobs:
 
       - name: A missing .ovpn or SSH key stops compose with a clear error
         run: |
-          # .env.example points at ./openvpn/client.ovpn and ./keys/key-to-aws.pem,
-          # which don't exist here.
+          # The .ovpn and key paths from .env.example don't exist on the runner.
+          ovpn=$(sed -n "s/^OVPN_CONFIG_PATH=//p" .env.example)
+          key=$(sed -n "s/^SSH_KEY_PATH=//p" .env.example)
           if out=$(docker compose up -d 2>&1); then status=0; else status=$?; fi
           docker compose down -t 1 >/dev/null 2>&1 || true
           echo "$out"
           test "$status" -ne 0
           echo "$out" | grep -q "bind source path does not exist"
           # ...and Docker must not have created empty folders in their place.
-          test ! -e openvpn/client.ovpn
-          test ! -e keys/key-to-aws.pem
+          test -n "$ovpn" && test ! -e "$ovpn"
+          test -n "$key" && test ! -e "$key"
 
       - name: End-to-end test (throwaway VPN server + SSH host)
         # The runner is disposable, so the test may also restart the Docker daemon
