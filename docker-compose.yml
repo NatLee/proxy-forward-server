@@ -71,10 +71,14 @@ services:
     container_name: pi-pproxy
     restart: always
     network_mode: "service:netns"
-    tty: true
-    stdin_open: true
     depends_on:
       - netns
-    # 預設只聽 127.0.0.1：只有走 SSH 通道進來的連線用得到。
+    # 聽的位址和埠：.env 有設就用 .env 的，沒設或留空就用 proxy/Dockerfile 的預設（只聽 127.0.0.1）。
     # PROXY_BIND=0.0.0.0 是舊版的行為（VPN 和 Docker 網路上的主機也能直接用，而且沒有帳密）。
-    command: [ "pproxy", "-l", "http+socks4+socks5://${PROXY_BIND:-127.0.0.1}:${PROXY_PORT}", "-vv" ]
+    environment:
+      - PROXY_BIND
+      - PROXY_PORT
+    # -vv：每個連線記一筆。詳細模式要讀終端機，所以開 tty。
+    tty: true
+    stdin_open: true
+    command: [ "-vv" ]
