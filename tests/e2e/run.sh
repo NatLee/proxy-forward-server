@@ -106,7 +106,7 @@ check() {
     echo "ok   $name${out:+  ($(printf '%s' "$out" | tail -n 1))}"
   else
     echo "FAIL $name"
-    printf '%s\n' "$out" | tail -n 5
+    printf '%s\n' "$out" | tail -n 25
     failed=1
   fi
 }
@@ -138,25 +138,27 @@ check "remote port 2080 listens on loopback only" remote_port_on_loopback_only
 
 # --- who else can use the proxy ----------------------------------------------
 
-# The shared namespace's address on the Docker network (the same for all three services).
-shared_ip=$(compose exec -T tunnel ip -4 -o addr show eth0 | awk '{print $4}' | cut -d/ -f1)
+# The shared namespace's address on the Docker network (the same for all three
+# services). Looked up each time, because it can change when Docker restarts.
+shared_ip() { compose exec -T tunnel ip -4 -o addr show eth0 | awk '{print $4}' | cut -d/ -f1; }
 vpn_peer_can_use_proxy() {
   on_remote curl -fsS -m 8 -o /dev/null -x http://10.8.0.2:1080 http://example.com/
 }
 docker_neighbour_can_use_proxy() {
+  ip=$(shared_ip)
   docker run --rm --network proxy-forward-e2e_default "$probe_image" \
-    -fsS -m 8 -o /dev/null -x "http://$shared_ip:1080" http://example.com/
+    -fsS -m 8 -o /dev/null -x "http://$ip:1080" http://example.com/
 }
 
 check "default: a VPN peer can NOT use the proxy directly (10.8.0.2:1080)" not vpn_peer_can_use_proxy
-check "default: another container on the Docker network can NOT use it ($shared_ip:1080)" \
-  not docker_neighbour_can_use_proxy
+check "default: another container on the Docker network can NOT use it" not docker_neighbour_can_use_proxy
 
 # --- nothing gets installed when openvpn starts --------------------------------
 
 openvpn_is_in_the_image() {
   image=$(docker inspect -f '{{.Config.Image}}' proxy-forward-e2e-openvpn)
-  docker run --rm --network none --entrypoint openvpn "$image" --version | head -n 1
+  version=$(docker run --rm --network none --entrypoint openvpn "$image" --version) || return 1
+  printf '%s\n' "$version" | head -n 1
 }
 no_package_install_in_openvpn_logs() {
   ! compose logs --no-color openvpn | grep -E 'fetch https?://|OK: [0-9.]+ [KMG]i?B in [0-9]+ packages'
@@ -167,6 +169,11 @@ check "the openvpn container installed no packages at start-up" no_package_insta
 # --- the proxy comes back on its own after openvpn goes away --------------------
 
 restarts() { docker inspect -f '{{.RestartCount}}' "$1"; }
+show_openvpn_state() {
+  docker inspect -f 'openvpn: {{.State.Status}}, restarts={{.RestartCount}}' proxy-forward-e2e-openvpn
+  docker exec proxy-forward-e2e-netns ip addr 2>&1 | grep -E '^[0-9]+:|inet '
+  docker logs --tail 12 proxy-forward-e2e-openvpn 2>&1
+}
 
 restart_openvpn_and_wait() {
   docker restart proxy-forward-e2e-openvpn >/dev/null
@@ -177,7 +184,10 @@ crash_openvpn_and_wait() {
   pid=$(docker inspect -f '{{.State.Pid}}' proxy-forward-e2e-openvpn)
   # SIGKILL from outside, like an OOM kill; the restart policy brings it back.
   docker run --rm --pid=host "$pinned_alpine" kill -9 "$pid"
-  wait_for_proxy 30 || return 1
+  if ! wait_for_proxy 30; then
+    show_openvpn_state
+    return 1
+  fi
   [ "$(restarts proxy-forward-e2e-openvpn)" -gt "$before" ]
 }
 long_vpn_outage_and_wait() {
@@ -187,7 +197,10 @@ long_vpn_outage_and_wait() {
   back_at=$(($(date +%s) + 45))
   while [ "$(date +%s)" -lt "$back_at" ]; do sleep 1; done
   docker start proxy-forward-e2e-openvpn >/dev/null
-  wait_for_proxy 90
+  if ! wait_for_proxy 90; then
+    show_openvpn_state
+    return 1
+  fi
 }
 tunnel_and_proxy_never_restarted() {
   [ "$(restarts proxy-forward-e2e-tunnel)" -eq 0 ] && [ "$(restarts proxy-forward-e2e-proxy)" -eq 0 ]
@@ -209,7 +222,7 @@ fi
 # --- PROXY_BIND=0.0.0.0 brings the old behaviour back ----------------------------
 
 write_env "PROXY_BIND=0.0.0.0"
-compose up -d proxy 2>&1 | tail -n 1
+compose up -d proxy 2>&1 | grep -E 'Recreate|Start|Running' || true
 check "PROXY_BIND=0.0.0.0: the remote host still works through the tunnel" wait_for_proxy 30
 check "PROXY_BIND=0.0.0.0: a VPN peer can use the proxy directly again" vpn_peer_can_use_proxy
 check "PROXY_BIND=0.0.0.0: another container on the Docker network can use it again" \
